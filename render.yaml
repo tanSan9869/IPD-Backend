@@ -1,0 +1,17 @@
+# Render configuration for backend service
+# This file is optional but can speed up deployment
+
+services:
+  - type: web
+    name: ipd-smartcare-backend
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    rootDir: backend
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: HOST
+        value: 0.0.0.0
