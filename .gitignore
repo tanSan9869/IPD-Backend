@@ -55,3 +55,6 @@ build/
 
 # Keep example files
 !.env.example
+
+# Allow RSA keys for JWT (needed for deployment)
+!keys/*.pem
