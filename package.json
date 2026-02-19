@@ -22,14 +22,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
-    "populate": "node populateDB.jsx",
-    "fix-passwords": "node fix-passwords.js",
-    "check-data": "node check-data.js",
-    "fix-data": "node fix-data.js",
-    "create-requests": "node create-sample-requests.js",
-    "create-files": "node create-sample-files.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "nodemon server.js"
   },
   "keywords": [],
   "author": "",
