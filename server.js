@@ -13,10 +13,12 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-const HOST = process.env.HOST || "127.0.0.1";
+// On Render (and most cloud hosts) the server must listen on 0.0.0.0.
+// If you omit the host, Node listens on all interfaces.
+const HOST = process.env.HOST || "0.0.0.0";
 
 app.listen(PORT, HOST, () => {
-  console.log(`🚀 Server running at http://${HOST}:${PORT}`);
-  console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🌐 Allowed origins: ${process.env.FRONTEND_URL || 'localhost only'}`);
+  console.log(`🚀 Server listening on ${HOST}:${PORT}`);
+  console.log(`📡 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(`🌐 FRONTEND_URL: ${process.env.FRONTEND_URL || "(not set)"}`);
 });
