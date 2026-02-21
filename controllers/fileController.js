@@ -3,7 +3,11 @@ import fs from "fs";
 import mongoose from "mongoose";
 import multer from "multer";
 import FileModel from "../models/File.js";
-import { uploadEncryptedFileToMega, downloadDecryptedFileFromMega } from "../mega.js";
+import {
+  uploadEncryptedFileToCloudinary,
+  downloadDecryptedFileFromCloudinary,
+  deleteCloudinaryAssetIfPresent,
+} from "../cloudinaryStorage.js";
 
 // Multer setup (temporary upload storage)
 export const upload = multer({ dest: "uploads/" });
@@ -16,7 +20,7 @@ export const uploadFile = async (req, res) => {
   }
 
   try {
-    const result = await uploadEncryptedFileToMega(
+    const result = await uploadEncryptedFileToCloudinary(
       req.file.path,
       req.file.originalname,
       patientId
@@ -30,7 +34,7 @@ export const uploadFile = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("Upload error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.statusCode || 500).json({ success: false, message: err.message });
   }
 };
 
@@ -75,7 +79,7 @@ export const listFilesForDoctor = async (req, res) => {
 export const downloadDecryptedFile = async (req, res) => {
   try {
     const { id: patientId, fileId } = req.params;
-    const result = await downloadDecryptedFileFromMega(fileId, patientId);
+    const result = await downloadDecryptedFileFromCloudinary(fileId, patientId);
 
     if (!result.success) {
       return res.status(400).json(result);
@@ -106,6 +110,11 @@ export const deleteFile = async (req, res) => {
     if (!fileDoc || fileDoc.patientId.toString() !== patientId) {
       return res.status(404).json({ success: false, message: "File not found" });
     }
+
+    // Best-effort delete from Cloudinary
+    try {
+      await deleteCloudinaryAssetIfPresent(fileDoc);
+    } catch {}
 
     if (fileDoc.path && fs.existsSync(fileDoc.path)) {
       fs.unlinkSync(fileDoc.path);

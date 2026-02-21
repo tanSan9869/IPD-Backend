@@ -2,7 +2,7 @@
 import fs from 'fs';
 import FormData from 'form-data';
 import fetch from 'node-fetch';
-import { downloadDecryptedFileFromMega } from '../mega.js';
+import { downloadDecryptedFileFromCloudinary } from '../cloudinaryStorage.js';
 import Request from '../models/Request.js';
 
 const SUMMARY_URL = process.env.NLP_SUMMARY_URL || 'http://127.0.0.1:5080/summarize';
@@ -90,7 +90,7 @@ export async function summarizeDoctorFile(req, res) {
     if (!ok) return res.status(403).json({ message: 'Access denied' });
 
     // Decrypt file locally
-    const result = await downloadDecryptedFileFromMega(fileId, patientId);
+    const result = await downloadDecryptedFileFromCloudinary(fileId, patientId);
     if (!result.success) return res.status(400).json({ message: result.message });
     tempDecPath = result.filePath;
 

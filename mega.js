@@ -14,16 +14,78 @@ import FileModel from "./models/File.js";
 
 dotenv.config();
 
-const storage = new Storage({
-  email: process.env.MEGA_EMAIL,
-  password: process.env.MEGA_PASSWORD,
-  autologin: true
-});
+let storage;
+
+function classifyMegaError(err) {
+  const code = err?.code;
+  const message = String(err?.message || err || "");
+
+  if (code === "EBLOCKED" || /User blocked/i.test(message)) {
+    const e = new Error(
+      "MEGA blocked this login (EBLOCKED: User blocked). " +
+        "This commonly happens on cloud hosts (Render) due to MEGA security checks. " +
+        "Unblock/verify the account in MEGA web, or switch to another storage provider."
+    );
+    e.statusCode = 503;
+    e.code = "MEGA_EBLOCKED";
+    return e;
+  }
+
+  // Common megajs auth failures
+  if (/Wrong password/i.test(message) || /Incorrect/i.test(message)) {
+    const e = new Error("MEGA authentication failed. Check MEGA_EMAIL/MEGA_PASSWORD.");
+    e.statusCode = 401;
+    e.code = "MEGA_AUTH";
+    return e;
+  }
+
+  return err instanceof Error ? err : new Error(message || "MEGA error");
+}
+
+async function getStorageReady() {
+  if (storage) return storage;
+
+  const email = process.env.MEGA_EMAIL;
+  const password = process.env.MEGA_PASSWORD;
+  if (!email || !password) {
+    const e = new Error("MEGA credentials missing. Set MEGA_EMAIL and MEGA_PASSWORD.");
+    e.statusCode = 500;
+    e.code = "MEGA_MISSING_CREDS";
+    throw e;
+  }
+
+  storage = new Storage({ email, password, autologin: true });
+
+  // Prevent the process from crashing when megajs emits an 'error' event.
+  try {
+    if (typeof storage.on === "function") {
+      storage.on("error", (err) => {
+        console.error("❌ MEGA Storage error event:", err);
+      });
+    }
+    if (storage.api && typeof storage.api.on === "function") {
+      storage.api.on("error", (err) => {
+        console.error("❌ MEGA API error event:", err);
+      });
+    }
+  } catch {
+    // best effort
+  }
+
+  try {
+    await storage.ready;
+    return storage;
+  } catch (err) {
+    // Reset so next request can retry after creds/account are fixed.
+    storage = undefined;
+    throw classifyMegaError(err);
+  }
+}
 
 /** 📤 Upload + Encrypt File to MEGA */
 export async function uploadEncryptedFileToMega(filePath, fileName, patientId) {
   try {
-    await storage.ready;
+    const readyStorage = await getStorageReady();
 
     // 1️⃣ Generate AES key and encrypt file locally
     const aesKey = generateAESKey();
@@ -37,7 +99,7 @@ export async function uploadEncryptedFileToMega(filePath, fileName, patientId) {
 
     // 2️⃣ Upload encrypted file to MEGA
     const stats = statSync(encryptedFilePath);
-    const uploadStream = storage.upload({
+    const uploadStream = readyStorage.upload({
       name: `${patientId}_${fileName}.enc`,
       size: stats.size
     });
@@ -70,19 +132,21 @@ export async function uploadEncryptedFileToMega(filePath, fileName, patientId) {
 
       uploadStream.on("error", err => {
         console.error("❌ MEGA Upload Error:", err);
-        reject({ success: false, message: "Upload failed!", error: err.message });
+        const e = classifyMegaError(err);
+        reject({ success: false, message: e.message || "Upload failed!", error: e.message });
       });
     });
   } catch (error) {
-    console.error("❌ Upload Error:", error);
-    throw error;
+    const e = classifyMegaError(error);
+    console.error("❌ Upload Error:", e);
+    throw e;
   }
 }
 
 /** 📥 Download + Decrypt File from MEGA */
 export async function downloadDecryptedFileFromMega(fileId, patientId) {
   try {
-    await storage.ready;
+    await getStorageReady();
 
     // 1️⃣ Find file metadata in MongoDB
     const fileRecord = await FileModel.findById(fileId);
@@ -118,9 +182,10 @@ export async function downloadDecryptedFileFromMega(fileId, patientId) {
       fileName: fileRecord.originalName
     };
   } catch (error) {
-    console.error("❌ Mega download error:", error);
-    return { success: false, message: "Mega download failed.", error: error.message };
+    const e = classifyMegaError(error);
+    console.error("❌ Mega download error:", e);
+    return { success: false, message: e.message || "Mega download failed.", error: e.message };
   }
 }
 
-export { storage,File };
+export { storage, File };

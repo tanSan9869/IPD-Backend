@@ -2,7 +2,16 @@ import mongoose from "mongoose";
 
 const FileSchema = new mongoose.Schema({
   originalName: { type: String, required: true },
-  megaLink: { type: String, required: true },
+  // Legacy MEGA link (kept for backward compatibility)
+  megaLink: { type: String, required: false },
+
+  // New storage fields (Cloudinary)
+  storageProvider: { type: String, default: "cloudinary" },
+  storageUrl: { type: String },
+  storagePublicId: { type: String },
+
+  // Optional size (bytes)
+  size: { type: Number },
   encryptedAESKey: { type: String, required: true }, // Base64 string
   iv: { type: String, required: true }, // Hex string
   patientId: {

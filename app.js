@@ -18,11 +18,16 @@ app.use(express.json());
 
 // --- CORS setup ---
 // Allow frontend URL from environment variable + local development URLs
+const envFrontendOrigins = String(process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
 const allowedOrigins = new Set([
-    "http://localhost:5173", 
+    "http://localhost:5173",
     "http://127.0.0.1:5173",
-    process.env.FRONTEND_URL
-].filter(Boolean)); // Remove undefined values
+    ...envFrontendOrigins,
+]);
 
 app.use(
     cors({
