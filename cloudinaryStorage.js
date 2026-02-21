@@ -42,7 +42,27 @@ function cloudinaryFolder() {
 }
 
 async function downloadUrlToFile(url, outputPath) {
-  const res = await fetch(url);
+  let res = await fetch(url);
+
+  // If Cloudinary is configured to require authentication for delivery,
+  // an anonymous GET may return 401. Retry once with HTTP Basic Auth
+  // using the API key/secret.
+  if (res.status === 401) {
+    try {
+      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+      const apiKey = process.env.CLOUDINARY_API_KEY;
+      const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+      if (cloudName && apiKey && apiSecret && url.includes("res.cloudinary.com")) {
+        const authHeader =
+          "Basic " + Buffer.from(`${apiKey}:${apiSecret}`).toString("base64");
+        res = await fetch(url, { headers: { Authorization: authHeader } });
+      }
+    } catch {
+      // ignore retry errors and fall through to generic handling
+    }
+  }
+
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     const e = new Error(`Failed to download encrypted file (HTTP ${res.status}) ${text}`);

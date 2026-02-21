@@ -41,7 +41,22 @@ export function decryptFileAES(inputPath, aesKey, ivHex, outputPath) {
 
 /** 🔒 RSA Encrypt AES key */
 export function encryptAESKeyWithRSA(aesKey, publicKey) {
-  return crypto.publicEncrypt(publicKey, aesKey).toString("base64");
+  try {
+    return crypto.publicEncrypt(publicKey, aesKey).toString("base64");
+  } catch (err) {
+    if (!publicKey) {
+      const e = new Error("RSA_PUBLIC_KEY is missing or empty. Set RSA_PUBLIC_KEY to a valid PEM public key in your environment.");
+      e.code = "RSA_PUBLIC_KEY_MISSING";
+      throw e;
+    }
+
+    const e = new Error(
+      "Invalid RSA_PUBLIC_KEY format. Ensure it is a valid PEM public key and that newlines are preserved or encoded as \\n."
+    );
+    e.code = "RSA_PUBLIC_KEY_INVALID";
+    e.opensslMessage = err.message;
+    throw e;
+  }
 }
 
 /** 🔓 RSA Decrypt AES key */
