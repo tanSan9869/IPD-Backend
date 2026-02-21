@@ -18,9 +18,15 @@ app.use(express.json());
 
 // --- CORS setup ---
 // Allow frontend URL from environment variable + local development URLs
+const normalizeOrigin = (value) => {
+    const s = String(value || "").trim();
+    // Browser Origin header never includes a trailing slash
+    return s.replace(/\/+$/g, "");
+};
+
 const envFrontendOrigins = String(process.env.FRONTEND_URL || "")
     .split(",")
-    .map((s) => s.trim())
+    .map(normalizeOrigin)
     .filter(Boolean);
 
 const allowedOrigins = new Set([

@@ -15,6 +15,9 @@ export const upload = multer({ dest: "uploads/" });
 // 📤 Upload with encryption
 export const uploadFile = async (req, res) => {
   const patientId = req.params.id;
+  if (!mongoose.Types.ObjectId.isValid(patientId)) {
+    return res.status(400).json({ success: false, message: "Invalid patient ID" });
+  }
   if (!req.file) {
     return res.status(400).json({ success: false, message: "No file uploaded" });
   }
