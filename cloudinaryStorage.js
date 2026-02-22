@@ -20,14 +20,18 @@ function ensureCloudinaryConfigured() {
 
   if (!cloudName || !apiKey || !apiSecret) {
     const e = new Error(
-      "Cloudinary credentials missing. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET."
+      "Cloudinary credentials missing. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.",
     );
     e.statusCode = 500;
     e.code = "CLOUDINARY_MISSING_CREDS";
     throw e;
   }
 
-  cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret });
+  cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+  });
 }
 
 function sanitizeFilename(name) {
@@ -53,7 +57,12 @@ async function downloadUrlToFile(url, outputPath) {
       const apiKey = process.env.CLOUDINARY_API_KEY;
       const apiSecret = process.env.CLOUDINARY_API_SECRET;
 
-      if (cloudName && apiKey && apiSecret && url.includes("res.cloudinary.com")) {
+      if (
+        cloudName &&
+        apiKey &&
+        apiSecret &&
+        url.includes("res.cloudinary.com")
+      ) {
         const authHeader =
           "Basic " + Buffer.from(`${apiKey}:${apiSecret}`).toString("base64");
         res = await fetch(url, { headers: { Authorization: authHeader } });
@@ -65,7 +74,9 @@ async function downloadUrlToFile(url, outputPath) {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    const e = new Error(`Failed to download encrypted file (HTTP ${res.status}) ${text}`);
+    const e = new Error(
+      `Failed to download encrypted file (HTTP ${res.status}) ${text}`,
+    );
     e.statusCode = 502;
     throw e;
   }
@@ -89,7 +100,11 @@ async function downloadUrlToFile(url, outputPath) {
  * 4) Encrypted file uploaded to Cloudinary as raw
  * 5) Metadata stored in Mongo
  */
-export async function uploadEncryptedFileToCloudinary(filePath, fileName, patientId) {
+export async function uploadEncryptedFileToCloudinary(
+  filePath,
+  fileName,
+  patientId,
+) {
   ensureCloudinaryConfigured();
 
   const originalName = fileName;
@@ -99,7 +114,10 @@ export async function uploadEncryptedFileToCloudinary(filePath, fileName, patien
   const encryptedAESKey = encryptAESKeyWithRSA(aesKey, publicKey);
 
   const safeName = sanitizeFilename(fileName);
-  const encryptedFilePath = path.join(path.dirname(filePath), `enc_${Date.now()}_${safeName}`);
+  const encryptedFilePath = path.join(
+    path.dirname(filePath),
+    `enc_${Date.now()}_${safeName}`,
+  );
   const { iv } = await encryptFileAES(filePath, aesKey, encryptedFilePath);
 
   try {
@@ -108,11 +126,13 @@ export async function uploadEncryptedFileToCloudinary(filePath, fileName, patien
     // 2) Upload encrypted file to Cloudinary (resource_type: raw)
     const publicIdBase = `${patientId}_${Date.now()}_${safeName}.enc`;
 
+    const uploadPreset = process.env.CLOUDINARY_UPLOAD_PRESET;
     const uploadResult = await cloudinary.uploader.upload(encryptedFilePath, {
       resource_type: "raw",
       folder: cloudinaryFolder(),
       public_id: publicIdBase,
       overwrite: false,
+      ...(uploadPreset ? { upload_preset: uploadPreset } : {}),
     });
 
     // 3) Persist metadata
