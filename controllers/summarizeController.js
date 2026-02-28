@@ -3,6 +3,8 @@ import fs from 'fs';
 import FormData from 'form-data';
 import fetch from 'node-fetch';
 import { downloadDecryptedFileFromCloudinary } from '../cloudinaryStorage.js';
+import { downloadDecryptedFileFromMega } from '../mega.js';
+import File from '../models/File.js';
 import Request from '../models/Request.js';
 
 const SUMMARY_URL = process.env.NLP_SUMMARY_URL || 'http://127.0.0.1:5080/summarize';
@@ -89,8 +91,23 @@ export async function summarizeDoctorFile(req, res) {
     const ok = await Request.exists({ doctorId, patientId, status: 'approved' });
     if (!ok) return res.status(403).json({ message: 'Access denied' });
 
-    // Decrypt file locally
-    const result = await downloadDecryptedFileFromCloudinary(fileId, patientId);
+    // Look up file metadata to decide which storage backend to use
+    const fileDoc = await File.findById(fileId);
+    if (!fileDoc || fileDoc.patientId.toString() !== patientId) {
+      return res.status(404).json({ message: 'File not found' });
+    }
+
+    let result;
+    if (fileDoc.storageUrl) {
+      // New Cloudinary-based storage
+      result = await downloadDecryptedFileFromCloudinary(fileId, patientId);
+    } else if (fileDoc.megaLink) {
+      // Legacy MEGA-based storage (still supported, mainly for local/dev)
+      result = await downloadDecryptedFileFromMega(fileId, patientId);
+    } else {
+      return res.status(400).json({ message: 'File has no storage location configured.' });
+    }
+
     if (!result.success) return res.status(400).json({ message: result.message });
     tempDecPath = result.filePath;
 

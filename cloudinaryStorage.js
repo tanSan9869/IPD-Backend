@@ -1,7 +1,7 @@
-import { v2 as cloudinary } from "cloudinary";
 import fs from "fs";
 import path from "path";
 import fetch from "node-fetch";
+import { createClient } from "@supabase/supabase-js";
 
 import {
   generateAESKey,
@@ -13,25 +13,26 @@ import {
 import { publicKey, privateKey } from "./keys/rsaKeys.js";
 import FileModel from "./models/File.js";
 
-function ensureCloudinaryConfigured() {
-  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-  const apiKey = process.env.CLOUDINARY_API_KEY;
-  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+let supabase = null;
 
-  if (!cloudName || !apiKey || !apiSecret) {
+function getSupabaseClient() {
+  if (supabase) return supabase;
+
+  const url = process.env.SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+
+  if (!url || !key) {
     const e = new Error(
-      "Cloudinary credentials missing. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.",
+      "Supabase credentials missing. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY.",
     );
     e.statusCode = 500;
-    e.code = "CLOUDINARY_MISSING_CREDS";
+    e.code = "SUPABASE_MISSING_CREDS";
     throw e;
   }
 
-  cloudinary.config({
-    cloud_name: cloudName,
-    api_key: apiKey,
-    api_secret: apiSecret,
-  });
+  supabase = createClient(url, key);
+  return supabase;
 }
 
 function sanitizeFilename(name) {
@@ -41,36 +42,12 @@ function sanitizeFilename(name) {
     .slice(0, 120);
 }
 
-function cloudinaryFolder() {
-  return process.env.CLOUDINARY_FOLDER || "smartcare";
+function supabaseBucket() {
+  return process.env.SUPABASE_BUCKET || "smartcare-encrypted";
 }
 
 async function downloadUrlToFile(url, outputPath) {
-  let res = await fetch(url);
-
-  // If Cloudinary is configured to require authentication for delivery,
-  // an anonymous GET may return 401. Retry once with HTTP Basic Auth
-  // using the API key/secret.
-  if (res.status === 401) {
-    try {
-      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-      const apiKey = process.env.CLOUDINARY_API_KEY;
-      const apiSecret = process.env.CLOUDINARY_API_SECRET;
-
-      if (
-        cloudName &&
-        apiKey &&
-        apiSecret &&
-        url.includes("res.cloudinary.com")
-      ) {
-        const authHeader =
-          "Basic " + Buffer.from(`${apiKey}:${apiSecret}`).toString("base64");
-        res = await fetch(url, { headers: { Authorization: authHeader } });
-      }
-    } catch {
-      // ignore retry errors and fall through to generic handling
-    }
-  }
+  const res = await fetch(url);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -93,11 +70,11 @@ async function downloadUrlToFile(url, outputPath) {
 }
 
 /**
- * Upload flow (same encryption as MEGA):
+ * Upload flow (same encryption as before, now using Supabase Storage):
  * 1) AES key generated
  * 2) File encrypted locally (AES-256-CBC)
  * 3) AES key encrypted with RSA public key
- * 4) Encrypted file uploaded to Cloudinary as raw
+ * 4) Encrypted file uploaded to Supabase Storage as a blob
  * 5) Metadata stored in Mongo
  */
 export async function uploadEncryptedFileToCloudinary(
@@ -105,7 +82,8 @@ export async function uploadEncryptedFileToCloudinary(
   fileName,
   patientId,
 ) {
-  ensureCloudinaryConfigured();
+  const client = getSupabaseClient();
+  const bucket = supabaseBucket();
 
   const originalName = fileName;
 
@@ -122,25 +100,43 @@ export async function uploadEncryptedFileToCloudinary(
 
   try {
     const stats = fs.statSync(encryptedFilePath);
+    const fileBuffer = await fs.promises.readFile(encryptedFilePath);
 
-    // 2) Upload encrypted file to Cloudinary (resource_type: raw)
-    const publicIdBase = `${patientId}_${Date.now()}_${safeName}.enc`;
+    // 2) Upload encrypted file to Supabase Storage
+    const objectPath = `${patientId}/${Date.now()}_${safeName}.enc`;
+    const { error: uploadError } = await client.storage
+      .from(bucket)
+      .upload(objectPath, fileBuffer, {
+        contentType: "application/octet-stream",
+        cacheControl: "3600",
+        upsert: false,
+      });
 
-    const uploadPreset = process.env.CLOUDINARY_UPLOAD_PRESET;
-    const uploadResult = await cloudinary.uploader.upload(encryptedFilePath, {
-      resource_type: "raw",
-      folder: cloudinaryFolder(),
-      public_id: publicIdBase,
-      overwrite: false,
-      ...(uploadPreset ? { upload_preset: uploadPreset } : {}),
-    });
+    if (uploadError) {
+      const e = new Error(`Supabase upload failed: ${uploadError.message}`);
+      e.statusCode = 500;
+      throw e;
+    }
 
-    // 3) Persist metadata
+    // 3) Get a public URL (bucket can be public; file is still encrypted)
+    const { data: publicData, error: publicErr } = client.storage
+      .from(bucket)
+      .getPublicUrl(objectPath);
+
+    if (publicErr) {
+      const e = new Error(`Supabase getPublicUrl failed: ${publicErr.message}`);
+      e.statusCode = 500;
+      throw e;
+    }
+
+    const publicUrl = publicData.publicUrl;
+
+    // 4) Persist metadata
     await FileModel.create({
       originalName,
-      storageProvider: "cloudinary",
-      storageUrl: uploadResult.secure_url,
-      storagePublicId: uploadResult.public_id,
+      storageProvider: "supabase",
+      storageUrl: publicUrl,
+      storagePublicId: objectPath,
       encryptedAESKey,
       iv,
       patientId,
@@ -151,7 +147,7 @@ export async function uploadEncryptedFileToCloudinary(
       success: true,
       message: "File encrypted & uploaded successfully!",
       fileName: originalName,
-      link: uploadResult.secure_url,
+      link: publicUrl,
     };
   } finally {
     // Cleanup temp encrypted file
@@ -164,13 +160,13 @@ export async function uploadEncryptedFileToCloudinary(
 }
 
 /**
- * Download flow (same decryption as MEGA):
- * 1) Download encrypted .enc from Cloudinary URL
+ * Download flow:
+ * 1) Download encrypted .enc from Supabase URL
  * 2) Decrypt AES key with RSA private key
  * 3) Decrypt file locally (AES-256-CBC)
  */
 export async function downloadDecryptedFileFromCloudinary(fileId, patientId) {
-  ensureCloudinaryConfigured();
+  getSupabaseClient();
 
   try {
     const fileRecord = await FileModel.findById(fileId);
@@ -207,25 +203,28 @@ export async function downloadDecryptedFileFromCloudinary(fileId, patientId) {
       fileName: fileRecord.originalName,
     };
   } catch (error) {
-    console.error("❌ Cloudinary download error:", error);
+    console.error("❌ Supabase download error:", error);
     return {
       success: false,
-      message: "Cloudinary download failed.",
+      message: "Supabase download failed.",
       error: error.message,
     };
   }
 }
 
 export async function deleteCloudinaryAssetIfPresent(fileDoc) {
-  ensureCloudinaryConfigured();
+  const client = getSupabaseClient();
+  const bucket = supabaseBucket();
 
-  const publicId = fileDoc?.storagePublicId;
-  if (!publicId) return;
+  const objectPath = fileDoc?.storagePublicId;
+  if (!objectPath) return;
 
   try {
-    await cloudinary.uploader.destroy(publicId, { resource_type: "raw" });
+    const { error } = await client.storage.from(bucket).remove([objectPath]);
+    if (error) {
+      console.error("❌ Supabase delete failed:", error);
+    }
   } catch (err) {
-    // Don't block delete if Cloudinary delete fails
-    console.error("❌ Cloudinary delete failed:", err);
+    console.error("❌ Supabase delete failed:", err);
   }
 }

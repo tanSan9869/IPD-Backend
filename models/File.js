@@ -5,8 +5,8 @@ const FileSchema = new mongoose.Schema({
   // Legacy MEGA link (kept for backward compatibility)
   megaLink: { type: String, required: false },
 
-  // New storage fields (Cloudinary)
-  storageProvider: { type: String, default: "cloudinary" },
+  // New storage fields (Supabase or other providers)
+  storageProvider: { type: String, default: "supabase" },
   storageUrl: { type: String },
   storagePublicId: { type: String },
 
